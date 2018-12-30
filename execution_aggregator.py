@@ -23,7 +23,7 @@ def on_message(ws, message):
             date = e['exec_date'].replace('T', ' ').replace('Z', '')
             sql = f'insert into bitflyer_executions values ({e["id"]}, "{e["side"]}", {e["price"]}, {e["size"]}, "{date}", "{e["buy_child_order_acceptance_id"]}", "{e["sell_child_order_acceptance_id"]}", "{symbol}");'
             cursor.execute(sql)
-            print(sql)
+            print(e["price"], e["size"])
         db.commit()
 
 def on_open(ws):
