@@ -44,7 +44,6 @@ def on_message(ws, message):
             create_sell_order(best_ask - 1)
 
     if channel == 'lightning_executions_BTC_JPY':
-        print(message_json)
         info = param_json['message']
         print(info)
         items = open_orders.items()
@@ -52,12 +51,16 @@ def on_message(ws, message):
             for execution in info:
                 if order['side'] == 'buy':
                     if order['id'] == execution['buy_child_order_acceptance_id']:
-                        del open_orders[order['id']]
-                        print('delete order', order['id'])
+                        order['size']  = order['size'] - execution['size']
+                        if order['size'] <= 0 :
+                            del open_orders[order['id']]
+                            print('delete order', order['id'])
                 if order['side'] == 'sell':
                     if order['id'] == execution['sell_child_order_acceptance_id']:
-                        del open_orders[order['id']]
-                        print('delete order', order['id'])
+                        order['size']  = order['size'] - execution['size']
+                        if order['size'] <= 0 :
+                            del open_orders[order['id']]
+                            print('delete order', order['id'])
 
 def on_open(ws):
     channels = [
