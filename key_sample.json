@@ -1,0 +1,10 @@
+{
+    "bitflyer": {
+        "api_key" : "",
+        "api_secret" : ""
+    },
+    "liquid": {
+        "api_key": "",
+        "api_secret": ""
+    }
+}
