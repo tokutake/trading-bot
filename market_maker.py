@@ -85,7 +85,7 @@ def on_message(ws, message):
         update_board(message_json)
         ask = best_ask()
         bid = best_bid()
-        if len(open_orders) == 0 and bid != None and ask != None:
+        if len(open_orders) == 0 and bid != None and ask != None and ask - 1 > bid + 1 and ask - bid < 50:
             create_buy_order(bid + 1)
             create_sell_order(ask - 1)
 
