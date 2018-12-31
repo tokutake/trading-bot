@@ -92,7 +92,6 @@ def on_message(ws, message):
     if channel == 'lightning_executions_' + channel_symbol:
         info = param_json['message']
         items = open_orders.items()
-        print(info)
         for id, order in items:
             for execution in info:
                 matched_order = None
