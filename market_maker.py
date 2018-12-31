@@ -95,20 +95,21 @@ def on_message(ws, message):
         print(info)
         for id, order in items:
             for execution in info:
+                matched_order = None
+                matched_execution = None
                 if order['side'] == 'buy':
                     if order['id'] == execution['buy_child_order_acceptance_id']:
-                        order['size']  = order['size'] - execution['size']
-                        print(order)
-                        if order['size'] <= 0 :
-                            del open_orders[order['id']]
-                            print('delete order', order['id'])
+                        matched_order = order
+                        matched_execution = execution
                 if order['side'] == 'sell':
                     if order['id'] == execution['sell_child_order_acceptance_id']:
-                        order['size']  = order['size'] - execution['size']
-                        print(order)
-                        if order['size'] <= 0 :
-                            del open_orders[order['id']]
-                            print('delete order', order['id'])
+                        matched_order = order
+                        matched_execution = execution
+                order['size']  = order['size'] - execution['size']
+                print(order)
+                if order['size'] <= 0 :
+                    del open_orders[order['id']]
+                    print('delete order', order['id'])
 
 def on_open(ws):
     channels = [
