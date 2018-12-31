@@ -14,7 +14,7 @@ bitflyer.load_markets()
 
 open_orders = {}
 
-lot = 0.001
+lot = 0.01
 
 def create_buy_order(price):
     o = bitflyer.create_limit_buy_order(symbol, lot, price)
