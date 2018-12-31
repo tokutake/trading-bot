@@ -2,8 +2,8 @@ import websocket
 import json
 import ccxt
 
-channel_symbol = 'BTC_JPY'
-symbol = 'BTC/JPY'
+channel_symbol = 'FX_BTC_JPY'
+symbol = 'FX_BTC_JPY'
 key_json = json.load(open('key.json'))
 bitflyer = ccxt.bitflyer({
         'apiKey': key_json['bitflyer']['api_key'],
