@@ -23,33 +23,33 @@ bitflyer = ccxt.bitflyer({
 bitflyer.load_markets()
 
 open_orders = {}
+open_interests = {}
 fetched_open_orders = []
 
 lot = 0.02
 
+def append_open_order(order, lot, price, side):
+    print('create buy order', order['id'])
+    order['size'] = lot
+    order['price'] = price
+    order['side'] = side
+    order['timestamp'] = datetime.datetime.now().timestamp()
+    open_orders[order['id']] = order
+
 def create_buy_order(price):
-    o = bitflyer.create_limit_buy_order(symbol, lot, price)
-    print('create buy order', o['id'])
-    o['size'] = lot
-    o['price'] = price
-    o['side'] = 'buy'
-    o['timestamp'] = datetime.datetime.now().timestamp()
-    open_orders[o['id']] = o
+    order = bitflyer.create_limit_buy_order(symbol, lot, price)
+    append_open_order(order, lot, price, 'buy')
 
 def create_sell_order(price):
-    o = bitflyer.create_limit_sell_order(symbol, lot, price)
-    print('create sell order', o['id'])
-    o['size'] = lot
-    o['price'] = price
-    o['side'] = 'sell'
-    open_orders[o['id']] = o
+    order = bitflyer.create_limit_sell_order(symbol, lot, price)
+    append_open_order(order, lot, price, 'sell')
 
 bids = {}
 asks = {}
 mid_price = None
 
 q = queue.Queue()
-max_open_order = 6
+max_open_order_pair = 3
 
 def update_board(message_json):
     mid_price = message_json['mid_price']
@@ -103,13 +103,24 @@ def on_open(ws):
 def on_close(ws):
     print('## close ##')
 
+def get_max_open_order_side_count():
+    buy_order_count = get_open_order_count('buy')
+    sell_order_count = get_open_order_count('sell')
+    return max(buy_order_count, sell_order_count)
+
+def get_open_order_count(side):
+    count = 0
+    for id, order in open_orders.items():
+        if order['side'] == side:
+            count += 1
+    return count
+
 class Bot(threading.Thread):
     def run(self):
         while True:
             if q.empty():
                 continue
 
-#            import pdb; pdb.set_trace()
             message = q.get()
             param_json = json.loads(message)['params']
             channel = param_json['channel']
@@ -119,18 +130,18 @@ class Bot(threading.Thread):
                 asks = {}
                 update_board(message_json)
                 expired_order = []
-                for order in fetched_open_orders:
+                for id, order in open_orders.items():
                     now = datetime.datetime.now()
                     if now.timestamp() - order['timestamp'] > 30:
                         expired_order.append(order)
                 for order in expired_order:
-                    print('cancle order:', order['id'])
+                    print('cancel order:', order['id'])
                     bitflyer.cancel_order(order['id'], symbol)
                     print('delete order:id:{}'.format(order['id']))
                     del open_orders[order['id']]
-                    if order['info']['side'] == 'buy':
+                    if order['side'] == 'buy':
                         create_buy_order(best_bid() + 1)
-                    if order['info']['side'] == 'sell':
+                    if order['side'] == 'sell':
                         create_sell_order(best_ask() - 1)
 
             if channel == 'lightning_board_' + channel_symbol:
@@ -140,7 +151,12 @@ class Bot(threading.Thread):
                 if bid == None or ask == None or ask - 1 <= bid + 1:
                     continue
                 # import pdb; pdb.set_trace()
-                if len(open_orders) < max_open_order:
+
+                buy_order_count = get_open_order_count('buy')
+                sell_order_count = get_open_order_count('sell')
+                if abs(buy_order_count - sell_order_count) > 1:
+                    continue
+                if get_max_open_order_side_count() < max_open_order_pair:
                     create_buy_order(bid + 1)
                     create_sell_order(ask - 1)
                     print('len(open_orders)', len(open_orders))
@@ -160,7 +176,8 @@ class Bot(threading.Thread):
                                 matched = True
                         if matched:
                             order['size']  = order['size'] - execution['size']
-                            print('matched order:id:{}, size:{}, execution size:{}'.format(order['id'], order['size']), execution['size'])
+                            # import pdb; pdb.set_trace()
+                            print('matched order:id:{}, size:{}, execution size:{}'.format(order['id'], order['size'], execution['size']))
                             if order['size'] <= 0 :
                                 closed_orders.append(open_orders[order['id']])
                 for order in closed_orders:
