@@ -147,7 +147,7 @@ class Bot(threading.Thread):
                 if bid == None or ask == None or ask - 1 <= bid + 1:
                     continue
                 # import pdb; pdb.set_trace()
-                if len(open_orders) < max_open_order and ask - bid < 10:
+                if len(open_orders) < max_open_order:
                     create_buy_order(bid + 1)
                     create_sell_order(ask - 1)
                     print('len(open_orders)', len(open_orders))
