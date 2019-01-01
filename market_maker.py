@@ -137,8 +137,8 @@ class Bot(threading.Thread):
                     del open_orders[order['id']]
                     if order['info']['side'] == 'buy':
                         create_buy_order(best_bid() + 1)
-                    if order['info']['side'] == 'buy':
-                        create_buy_order(best_ask() - 1)
+                    if order['info']['side'] == 'sell':
+                        create_sell_order(best_ask() - 1)
 
             if channel == 'lightning_board_' + channel_symbol:
                 update_board(message_json)
