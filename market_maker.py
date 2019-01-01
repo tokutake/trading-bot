@@ -170,8 +170,7 @@ class Bot(threading.Thread):
                             if order['size'] <= 0 :
                                 closed_orders.append(open_orders[order['id']])
                 for order in closed_orders:
-                    print('delete order', order['id'])
-                    print(order)
+                    print('delete order:id:{}, size:{}'.format(order['id'], order['size']))
                     del open_orders[order['id']]
 
 
