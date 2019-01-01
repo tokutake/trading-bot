@@ -27,8 +27,6 @@ fetched_open_orders = []
 
 lot = 0.02
 
-lock = threading.Lock()
-
 def create_buy_order(price):
     o = bitflyer.create_limit_buy_order(symbol, lot, price)
     print('create buy order', o['id'])
@@ -50,8 +48,6 @@ bids = {}
 asks = {}
 mid_price = None
 
-lock = threading.Lock()
-open_order_count = 0
 q = queue.Queue()
 max_open_order = 6
 
