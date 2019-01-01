@@ -131,7 +131,10 @@ class Bot(threading.Thread):
                     if now.timestamp() - order_date.timestamp > 60 * 2:
                         expired_order.append(order)
                 for order in expired_order:
+                    print('cancle order:', order['id'])
                     bitflyer.cancel_order(order['id'], symbol)
+                    print('delete order:id:{}'.format(order['id']))
+                    del open_orders[order['id']]
                     if order['info']['side'] == 'buy':
                         create_buy_order(best_bid() + 1)
                     if order['info']['side'] == 'buy':
