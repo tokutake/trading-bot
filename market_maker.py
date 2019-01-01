@@ -4,7 +4,6 @@ import ccxt
 import threading
 import time
 import queue
-import arrow
 import datetime
 
 is_fx = True
@@ -36,6 +35,7 @@ def create_buy_order(price):
     o['size'] = lot
     o['price'] = price
     o['side'] = 'buy'
+    o['timestamp'] = datetime.datetime.now().timestamp()
     open_orders[o['id']] = o
 
 def create_sell_order(price):
@@ -122,13 +122,10 @@ class Bot(threading.Thread):
                 bids = {}
                 asks = {}
                 update_board(message_json)
-                fetched_open_orders = bitflyer.fetch_open_orders(symbol)
                 expired_order = []
                 for order in fetched_open_orders:
-                    info = order['info']
-                    order_date = arrow.get(info['child_order_date'])
                     now = datetime.datetime.now()
-                    if now.timestamp() - order_date.timestamp > 60 * 2:
+                    if now.timestamp() - order['timestamp'] > 30:
                         expired_order.append(order)
                 for order in expired_order:
                     print('cancle order:', order['id'])
