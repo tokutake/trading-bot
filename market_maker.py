@@ -164,6 +164,7 @@ class Bot(threading.Thread):
                                 matched = True
                         if matched:
                             order['size']  = order['size'] - execution['size']
+                            print('matched order:id:{}, size:{}, execution size:{}'.format(order['id'], order['size']), execution['size'])
                             if order['size'] <= 0 :
                                 closed_orders.append(open_orders[order['id']])
                 for order in closed_orders:
