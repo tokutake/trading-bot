@@ -1,10 +1,13 @@
 import ccxt
 import time
 import json
+import datetime
 from forex_python.converter import CurrencyRates
 
 def debug():
     import pdb; pdb.set_trace()
+
+print(datetime.datetime.now())
 
 key_file = open('key.json', 'r')
 keys = json.load(key_file)
