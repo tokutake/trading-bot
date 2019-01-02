@@ -26,12 +26,14 @@ lot = 0.1
 pl = 0
 
 def max_diff(n):
-    max = -1000000
+    max = None
     for i in range(1, n + 1):
         if len(diffs) - i < 0:
             break
         diff = diffs[len(diffs) - i]
-        if diff > max:
+        if max == None:
+            max = diff
+        if abs(diff) > abs(max):
             max = diff
     return max
 
@@ -69,28 +71,48 @@ def pl(bitflyer_price, bitmex_price, rate):
     initial_asset = asset.initial_jpy + asset.initial_xbt * bitmex_price * rate
     total = asset.jpy + asset.xbt * bitmex_price * rate
     if has_position():
-        total += bitflyer_price * bitflyer_position.size
-        unrealized_xbt = (bitmex_price - bitmex_position.price) * bitmex_position.size / bitmex_price
+        total += bitflyer_price * asset.btc
+        unrealized_xbt = 0
+        if bitmex_position.side == 'buy':
+            unrealized_xbt = (bitmex_price - bitmex_position.price) * bitmex_position.size / bitmex_price
+        else:
+            unrealized_xbt = (bitmex_position.price - bitmex_price) * bitmex_position.size / bitmex_price
         total += unrealized_xbt * rate
     return total - initial_asset
 
-def open(bitflyer_price, bitmex_price):
-    bitflyer_position.side = 'sell'
-    bitflyer_position.price = bitflyer_price
-    bitflyer_position.size = 0.1
-    asset.jpy -= bitflyer_price * 0.1
-    asset.btc -= 0.1
-    bitmex_position.side = 'buy'
-    bitmex_position.price = bitmex_price
-    bitmex_position.size = 0.1
+def open(bitflyer_price, bitmex_price, diff):
+    if diff > 0:
+        bitflyer_position.side = 'sell'
+        bitflyer_position.price = bitflyer_price
+        bitflyer_position.size = 0.1
+        asset.jpy += bitflyer_price * 0.1
+        asset.btc -= 0.1
+        bitmex_position.side = 'buy'
+        bitmex_position.price = bitmex_price
+        bitmex_position.size = 0.1
+    else:
+        bitflyer_position.side = 'buy'
+        bitflyer_position.price = bitflyer_price
+        bitflyer_position.size = 0.1
+        asset.jpy -= bitflyer_price * 0.1
+        asset.btc += 0.1
+        bitmex_position.side = 'sell'
+        bitmex_position.price = bitmex_price
+        bitmex_position.size = 0.1
 
 def close(bitflyer_price, bitmex_price):
+    asset.jpy += bitflyer_price * asset.btc
+    if bitflyer_position.side == 'buy':
+        asset.btc -= 0.1
+    else:
+        asset.btc -= 0.1
     bitflyer_position.side = None
     bitflyer_position.price = None
     bitflyer_position.size = 0
-    asset.jpy += bitflyer_price * 0.1
-    asset.btc += 0.1
-    asset.xbt += (bitmex_price - bitmex_position.price) * bitmex_position.size / bitmex_price
+    if bitmex_position.side == 'buy':
+        asset.xbt += (bitmex_price - bitmex_position.price) * bitmex_position.size / bitmex_price
+    else:
+        asset.xbt += (bitmex_price - bitmex_position.price) * bitmex_position.size / bitmex_price
     bitmex_position.side = None
     bitmex_position.price = None
     bitmex_position.size = 0
@@ -115,11 +137,11 @@ while True:
     print('pl:', pl(bitflyer_ticker['last'], bitmex_ticker['last'], rate))
     if opening_diff:
         print("opening_diff:", opening_diff)
-    if diff > max_diff(5) and not has_position():
+    if max_diff(5) and abs(diff) > abs(max_diff(5)) and not has_position():
         print('open')
-        open(bitflyer_ticker['last'], bitmex_ticker['last'])
+        open(bitflyer_ticker['last'], bitmex_ticker['last'], diff)
         opening_diff = diff
-    if has_position() and opening_diff - diff > 0:
+    if has_position() and abs(opening_diff) > abs(diff):
         print('close')
         close(bitflyer_ticker['last'], bitmex_ticker['last'])
         opening_diff = None
