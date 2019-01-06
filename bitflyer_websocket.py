@@ -22,10 +22,9 @@ class BitflyerWebsocket():
         # note: reconnection handling needed.
         self.ws = websocket.WebSocketApp("wss://ws.lightstream.bitflyer.com/json-rpc",
                                     on_message=self.on_message, on_open=self.on_open)
-        self.ws.run_forever()
-        #self.wst = threading.Thread(target=lambda: self.ws.run_forever())
-        #self.wst.daemon = True
-        #self.wst.start()
+        self.wst = threading.Thread(target=lambda: self.ws.run_forever())
+        self.wst.daemon = True
+        self.wst.start()
 
     def print_boar(self):
         for price, size in self.asks.items():
@@ -41,11 +40,9 @@ class BitflyerWebsocket():
             self.asks[ask['price']] = ask['size']
 
     def on_message(self, message):
-        print(message)
         param_json = json.loads(message)['params']
         channel = param_json['channel']
         message_json = param_json['message']
-        print(message_json)
         if channel == 'lightning_board_snapshot_' + self.channel_symbol:
             self.on_board_snapshot(message_json)
 
@@ -77,4 +74,5 @@ class BitflyerWebsocket():
         self.update_board(message_json)
 
     def on_execution(self, message_json):
-        info = param_json['message']
+        for execution in message_json:
+            self.executions.append(execution)
