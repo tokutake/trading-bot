@@ -28,6 +28,12 @@ bf.load_markets()
 def getcollateral():
     return bf.request('getcollateral', 'private')['collateral']
 
+def get_best_bid():
+    orderBook = bf.fetchOrderBook(symbol)
+    bids = orderBook['bids']
+    bids.sort(reverse = True)
+    return bids[0][0]
+
 def get_target_price():
     orderBook = bf.fetchOrderBook(symbol)
     bids = orderBook['bids']
@@ -82,8 +88,11 @@ def get_parent_order(order):
             return order
     return None
 
-def get_child_order(parent_order_id):
-    return bf.request('getchildorders', 'private', params = {'product_code': 'FX_BTC_JPY', 'parent_order_id': parent_order_id})
+def get_child_order_since(time):
+    child_orders = bf.request('getchildorders', 'private', params = {'product_code': 'FX_BTC_JPY'})
+
+def cancel_parent_order(order):
+    return bf.request('cancelparentorder', 'private', 'POST', params = {'product_code': 'FX_BTC_JPY', 'parent_order_id': order['parent_order_id']})
 
 win = 0
 lose = 0
@@ -102,13 +111,19 @@ for i in range(20):
     parent_order = None
     while True:
         parent_order = get_parent_order(request_order)
-        print(parent_order)
         if parent_order:
             state = parent_order['parent_order_state']
+
+        # cancel order if it is difficult to fufill
+        if state == 'ACTIVE' and parent_order['executed_size'] == 0:
+            best_bid = get_best_bid()
+            print('best_bid:{}, target_price:{}, target_spread:{}, elapsed_time:{}'.format(best_bid, target_price, target_spread, elapsed_time(request_sent_time)))
+            if best_bid > target_price + target_spread and elapsed_time(request_sent_time) > 10 * 1000:
+                cancel_parent_order(parent_order)
+
         if prev_state != state:
             print(state)
         if state == 'COMPLETED' or state == 'CANCELED' or state == 'EXPIRED':
-#            import pdb; pdb.set_trace()
             break
         if prev_state != 'ACTIVE' and state == 'ACTIVE':
             print('time untile active:', elapsed_time(request_sent_time))
@@ -119,6 +134,7 @@ for i in range(20):
         prev_state = state 
 
     child_order = bf.request('getchildorders', 'private', params = {'product_code': 'FX_BTC_JPY', 'count': '1'})[0]
+    print(child_order)
     if state != 'COMPLETED' or target_price == child_order['price']:
         draw += 1
     elif target_price < child_order['price']:
