@@ -3,6 +3,7 @@ import json
 import threading
 import queue
 import ccxt
+import datetime
 
 class BitflyerWebsocket():
     is_fx = True
@@ -17,6 +18,9 @@ class BitflyerWebsocket():
     bids = {}
     asks = {}
     mid_price = None
+    board_update_queue = queue.Queue()
+    board_snapshot_queue = queue.Queue()
+    execution_queue = queue.Queue()
 
     executions = []
 
@@ -134,16 +138,21 @@ class BitflyerWebsocket():
         print('## close ##')
 
     def on_board_snapshot(self, message_json):
+        message_json['date'] = datetime.datetime.utcnow()
+        self.board_snapshot_queue.put(message_json)
         self.bids = {}
         self.asks = {}
         self.update_board(message_json)
         self.is_board_initialized = True
 
     def on_board(self, message_json):
+        message_json['date'] = datetime.datetime.utcnow()
+        self.board_update_queue.put(message_json)
         self.update_board(message_json)
 
     def on_execution(self, message_json):
         for execution in message_json:
+            self.execution_queue.put(execution)
             self.executions.append(execution)
 
     def getcollateral(self):
@@ -151,3 +160,9 @@ class BitflyerWebsocket():
 
     def getchildorders(self):
         return self.bf.request('getchildorders', 'private', params = {'product_code': self.symbol})
+
+    def getpositions(self):
+        return self.bf.request('getpositions', 'private', params = {'product_code': self.symbol})
+
+    def create_market_order(self, side, size):
+        return self.bf.create_market_order(self.symbol, side, size)
