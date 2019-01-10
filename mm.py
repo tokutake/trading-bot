@@ -9,7 +9,7 @@ import arrow
 symbol = 'FX_BTC_JPY'
 bf = bitflyer_websocket.BitflyerWebsocket()
 
-lot = 0.01
+lot = 0.02
 target_spread = 50
 max_special_order = 1
 print('lot:', lot)
@@ -111,13 +111,13 @@ def cancel_missed_order():
         # cancel order if it is difficult to fufill
         if parent_order['executed_size'] == 0:
             if best_bid > target_price + target_spread and elapsed_time(order_date) > 10:
-                print('cancel order at ', parent_order['price'])
+                print('cancel order')
                 bf.cancel_parent_order(parent_order)
 
         # if missed stop lost order, cancel parent special order
         if parent_order['executed_size'] > 0:
             if best_ask < target_price - target_spread * 2 and elapsed_time(order_date) > 20:
-                print('cancel order at ', parent_order['price'])
+                print('cancel order')
                 bf.cancel_parent_order(parent_order)
 
 print(datetime.datetime.now())
@@ -130,10 +130,10 @@ while True:
             target_price = bf.get_best_bid_with_depth(0.1)
             send_buy_ifdoco(target_price)
 
-        time.sleep(1)
+        time.sleep(0.5)
 
         cancel_missed_order()
-        time.sleep(1)
+        time.sleep(0.5)
         exit_unnecessary_position()
 
     except Exception:
