@@ -4,25 +4,34 @@ import datetime
 import time
 import numpy as np
 import traceback
+import arrow
 
 symbol = 'FX_BTC_JPY'
 bf = bitflyer_websocket.BitflyerWebsocket()
 
 lot = 0.01
 target_spread = 50
+max_special_order = 1
 print('lot:', lot)
 print('target_spread:', target_spread)
+print('max_special_order:', max_special_order)
 
 def now():
     return datetime.datetime.now()
 
 def elapsed_time(prev):
-    return np.timedelta64(now() - prev, 'ms') / np.timedelta64(1, 'ms')
+    return (arrow.utcnow() - prev).seconds
 
 print(datetime.datetime.now())
 
+def adjust_target_price(target_price):
+    # When using lightning UI, left click on chart price is multiple of 50
+    # so, there is a lot of limit order at price of multiple of 50
+    # it is hard to cross wall, place order price inside of wall
+    pass
+
 def send_buy_ifdoco(target_price):
-    return bf.send_parent_order({
+    order = bf.send_parent_order({
       "order_method": "IFDOCO",
       "minute_to_expire": 5,
       "time_in_force": "GTC",
@@ -49,89 +58,85 @@ def send_buy_ifdoco(target_price):
         "size": lot
       }]
     })
+    print(order)
 
 while True:
     if bf.get_best_bid():
         break
     time.sleep(1)
 
-win = 0
-lose = 0
-draw = 0
-pl = 0
+parent_orders = []
+def exit_position(side, size):
+    print('exit {} position, size:{}'.format(side, size))
+    # import pdb; pdb.set_trace()
+    opposite = None
+    if side == 'BUY':
+        opposite = 'SELL'
+    else:
+        opposite = 'BUY'
+
+    if size < 0.01:
+        bf.create_market_order(opposite, size + 0.01)
+        bf.create_market_order(side, 0.01)
+    else:
+        bf.create_market_order(opposite, size)
+
+def exit_unnecessary_position():
+    positions = bf.getpositions()
+    best_ask = bf.get_best_ask()
+    best_bid = bf.get_best_bid()
+    for position in positions:
+        open_date = arrow.get(position['open_date'])
+        if elapsed_time(open_date) < 20:
+            continue
+        price = position['price']
+        side = position['side']
+        if side == 'BUY' and price < best_bid - target_spread * 2:
+            exit_position(side, position['size'])
+        if side == 'SELL' and price > best_ask + target_spread * 2:
+            exit_position(side, position['size'])
+
+def cancel_missed_order():
+    best_bid = bf.get_best_bid()
+    best_ask = bf.get_best_ask()
+    for parent_order in parent_orders:
+        state = parent_order['parent_order_state']
+        if state != 'ACTIVE':
+            continue
+
+        parent_order_date = parent_order['parent_order_date']
+        order_date = arrow.get(parent_order_date)
+        target_price = parent_order['price']
+
+        # cancel order if it is difficult to fufill
+        if parent_order['executed_size'] == 0:
+            if best_bid > target_price + target_spread and elapsed_time(order_date) > 10:
+                print('cancel order at ', parent_order['price'])
+                bf.cancel_parent_order(parent_order)
+
+        # if missed stop lost order, cancel parent special order
+        if parent_order['executed_size'] > 0:
+            if best_ask < target_price - target_spread * 2 and elapsed_time(order_date) > 20:
+                print('cancel order at ', parent_order['price'])
+                bf.cancel_parent_order(parent_order)
+
+print(datetime.datetime.now())
 while True:
     try:
-        print(datetime.datetime.now())
-        target_price = bf.get_best_bid_with_depth(0.1)
-        request_order = send_buy_ifdoco(target_price)
-        request_sent_time = now()
+        parent_orders = bf.get_active_parent_orders()
+        if len(parent_orders) < max_special_order:
+            print('collateral:', bf.getcollateral());
+            # TODO: adjust target price not to cross 50 wall
+            target_price = bf.get_best_bid_with_depth(0.1)
+            send_buy_ifdoco(target_price)
 
-        is_active = False
-        prev_state = None
-        state = None
-        parent_order = None
-        while True:
-            time.sleep(2)
-            parent_order = bf.get_parent_order(request_order)
-            if parent_order:
-                state = parent_order['parent_order_state']
+        time.sleep(1)
 
-            # cancel order if it is difficult to fufill
-            if state == 'ACTIVE' and parent_order['executed_size'] == 0:
-                best_bid = bf.get_best_bid()
-                if best_bid > target_price + target_spread and elapsed_time(request_sent_time) > 10 * 1000:
-                    bf.cancel_parent_order(parent_order)
+        cancel_missed_order()
+        time.sleep(1)
+        exit_unnecessary_position()
 
-            # if missed stop lost order, cancel parent special order
-            if state == 'ACTIVE' and parent_order['executed_size'] > 0:
-                best_ask = bf.get_best_ask()
-                if best_ask < target_price - target_spread * 2 and elapsed_time(request_sent_time) > 20 * 1000:
-                    bf.cancel_parent_order(parent_order)
-
-            if prev_state != state:
-                print(state)
-            if state == 'COMPLETED' or state == 'CANCELED' or state == 'EXPIRED' or state == 'REJECTED':
-                break
-            if prev_state != 'ACTIVE' and state == 'ACTIVE':
-                print('time until active:', elapsed_time(request_sent_time))
-            if state == 'ACTIVE':
-                is_active = True
-            prev_state = state 
-
-        positions = bf.getpositions()
-        for position in positions:
-            side = None
-            if position['size'] < 0.01:
-                if position['side'] == 'BUY':
-                    side = 'sell'
-                else:
-                    side = 'buy'
-                bf.create_market_order(side, position['size'] + 0.01)
-                bf.create_market_order(position['side'], 0.01)
-            else:
-                if position['side'] == 'BUY':
-                    side = 'sell'
-                else:
-                    side = 'buy'
-                bf.create_market_order(side, position['size'])
-
-
-        child_order = bf.getchildorders()[0]
-        if state != 'COMPLETED' and parent_order['executed_size'] > 0:
-            lose += 1
-            pl += child_order['price'] - target_price
-        elif state != 'COMPLETED' or target_price == child_order['price']:
-            draw += 1
-        elif target_price < child_order['price']:
-            win += 1
-            pl += child_order['price'] - target_price
-        else:
-            lose += 1
-            pl += child_order['price'] - target_price
-
-        print('collateral:', bf.getcollateral());
-        print('win:{}, lose:{}, draw:{}, pl:{}'.format(win, lose, draw, pl))
-        # import pdb; pdb.set_trace()
     except Exception:
         print(traceback.format_exc())
+        time.sleep(3)
 

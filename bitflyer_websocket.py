@@ -24,6 +24,9 @@ class BitflyerWebsocket():
 
     executions = []
 
+    positions = []
+    orders = []
+
     def __init__(self):
         key_json = json.load(open('key.json'))
         self.bf = ccxt.bitflyer({
@@ -68,6 +71,20 @@ class BitflyerWebsocket():
 
     def send_parent_order(self, params):
         return self.bf.request("sendparentorder", "private", "POST", params)
+
+    def get_active_parent_orders(self, params = {}):
+        params['product_code'] = self.symbol
+        orders = self.bf.request('getparentorders', 'private', params = params)
+        active_orders = []
+        for order in orders:
+            state = order['parent_order_state']
+            if state == 'ACTIVE':
+                active_orders.append(order)
+        return active_orders
+
+    def get_parent_orders(self, params = {}):
+        params['product_code'] = self.symbol
+        return self.bf.request('getparentorders', 'private', params = params)
 
     def get_parent_order(self, request_order):
         orders = self.bf.request('getparentorders', 'private', params = {'product_code': self.symbol})
@@ -160,6 +177,9 @@ class BitflyerWebsocket():
 
     def getchildorders(self):
         return self.bf.request('getchildorders', 'private', params = {'product_code': self.symbol})
+
+    def getchildorders(self, parent_order_id):
+        return self.bf.request('getchildorders', 'private', params = {'product_code': self.symbol, 'parent_order_id': parent_order_id})
 
     def getpositions(self):
         return self.bf.request('getpositions', 'private', params = {'product_code': self.symbol})
