@@ -4,15 +4,13 @@ import threading
 import queue
 import ccxt
 import datetime
+import arrow
 
 class BitflyerWebsocket():
     is_fx = True
 
-    channel_symbol = 'BTC_JPY'
-    symbol = 'BTC/JPY'
-    if is_fx:
-        channel_symbol = 'FX_BTC_JPY'
-        symbol = 'FX_BTC_JPY'
+    channel_symbol = 'FX_BTC_JPY'
+    symbol = 'FX_BTC_JPY'
 
     is_board_initialized = False
     bids = {}
@@ -25,7 +23,7 @@ class BitflyerWebsocket():
     executions = []
 
     positions = []
-    orders = []
+    orders = {}
 
     def __init__(self):
         key_json = json.load(open('key.json'))
@@ -72,29 +70,12 @@ class BitflyerWebsocket():
     def send_parent_order(self, params):
         return self.bf.request("sendparentorder", "private", "POST", params)
 
-    def get_active_parent_orders(self, params = {}):
-        params['product_code'] = self.symbol
-        orders = self.bf.request('getparentorders', 'private', params = params)
-        active_orders = []
-        for order in orders:
-            state = order['parent_order_state']
-            if state == 'ACTIVE':
-                active_orders.append(order)
-        return active_orders
-
-    def get_parent_orders(self, params = {}):
-        params['product_code'] = self.symbol
-        return self.bf.request('getparentorders', 'private', params = params)
-
-    def get_parent_order(self, request_order):
-        orders = self.bf.request('getparentorders', 'private', params = {'product_code': self.symbol})
-        for order in orders:
-            if request_order['parent_order_acceptance_id'] == order['parent_order_acceptance_id']:
-                return order
-        return None
-
     def cancel_parent_order(self, order):
         return self.bf.request('cancelparentorder', 'private', 'POST', params = {'product_code': self.symbol, 'parent_order_id': order['parent_order_id']})
+
+    def cancel_child_order(self, order):
+        del self.orders[order['id']]
+        return self.bf.cancel_order(order['id'], self.symbol)
 
     def get_best_ask(self):
         if not self.is_board_initialized:
@@ -170,19 +151,34 @@ class BitflyerWebsocket():
     def on_execution(self, message_json):
         for execution in message_json:
             self.execution_queue.put(execution)
-            self.executions.append(execution)
 
     def getcollateral(self):
         return self.bf.request('getcollateral', 'private')['collateral']
 
-    def getchildorders(self):
-        return self.bf.request('getchildorders', 'private', params = {'product_code': self.symbol})
-
-    def getchildorders(self, parent_order_id):
-        return self.bf.request('getchildorders', 'private', params = {'product_code': self.symbol, 'parent_order_id': parent_order_id})
+    def get_child_orders(self):
+        return self.orders
 
     def getpositions(self):
         return self.bf.request('getpositions', 'private', params = {'product_code': self.symbol})
 
     def create_market_order(self, side, size):
-        return self.bf.create_market_order(self.symbol, side, size)
+        order = self.bf.create_market_order(self.symbol, side, size)
+        order['child_order_date'] = arrow.utcnow()
+        order['side'] = side
+        order['size'] = size
+        order['executed_size'] = 0
+        order['order_type'] = 'MARKET'
+        self.orders[order['id']] = order
+        return order
+
+    def send_limit_order(self, side, size, price):
+        order = self.bf.create_order(self.symbol, 'LIMIT', side, size, price)
+        order['child_order_date'] = arrow.utcnow()
+        order['price'] = price
+        order['side'] = side
+        order['size'] = size
+        order['executed_size'] = 0
+        order['order_type'] = 'LIMIT'
+        # {'info': {'child_order_acceptance_id': 'JRF20190111-064826-160415'}, 'id': 'JRF20190111-064826-160415'}
+        self.orders[order['id']] = order
+        return order

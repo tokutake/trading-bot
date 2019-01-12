@@ -6,19 +6,18 @@ import numpy as np
 import traceback
 import arrow
 from pymongo import MongoClient
+import redis
 
-client = MongoClient()
-db = client.test_database
+r = redis.Redis(decode_responses=True)
 
-symbol = 'FX_BTC_JPY'
 bf = bitflyer_websocket.BitflyerWebsocket()
 
 lot = 0.01
 target_spread = 50
-max_special_order = 3
+max_order = 2
 print('lot:', lot)
 print('target_spread:', target_spread)
-print('max_special_order:', max_special_order)
+print('max_order:', max_order)
 
 def now():
     return datetime.datetime.now()
@@ -28,66 +27,14 @@ def elapsed_time(prev):
 
 print(datetime.datetime.now())
 
-def short(target_price):
-    order = bf.send_parent_order({
-      "order_method": "IFDOCO",
-      "minute_to_expire": 5,
-      "time_in_force": "GTC",
-      "parameters": [{
-        "product_code": symbol,
-        "condition_type": "LIMIT",
-        "side": "SELL",
-        "price": target_price,
-        "size": lot
-      },
-      {
-        "product_code": symbol,
-        "condition_type": "LIMIT",
-        "side": "BUY",
-        "price": target_price - target_spread - 1,
-        "size": lot
-      },
-      {
-        "product_code": symbol,
-        "condition_type": "STOP_LIMIT",
-        "side": "BUY",
-        "price": target_price + target_spread,
-        "trigger_price": target_price + target_spread,
-        "size": lot
-      }]
-    })
-    print(order)
+def short(target_price, size):
+    order = bf.send_limit_order('SELL', size, target_price)
+    print('short', target_price)
     return order
 
-def long(target_price):
-    order = bf.send_parent_order({
-      "order_method": "IFDOCO",
-      "minute_to_expire": 5,
-      "time_in_force": "GTC",
-      "parameters": [{
-        "product_code": symbol,
-        "condition_type": "LIMIT",
-        "side": "BUY",
-        "price": target_price,
-        "size": lot
-      },
-      {
-        "product_code": symbol,
-        "condition_type": "LIMIT",
-        "side": "SELL",
-        "price": target_price + target_spread + 1,
-        "size": lot
-      },
-      {
-        "product_code": symbol,
-        "condition_type": "STOP_LIMIT",
-        "side": "SELL",
-        "price": target_price - target_spread,
-        "trigger_price": target_price - round(1.0 * target_spread),
-        "size": lot
-      }]
-    })
-    print(order)
+def long(target_price, size):
+    order = bf.send_limit_order('BUY', size, target_price)
+    print('long:', target_price)
     return order
 
 while True:
@@ -95,10 +42,8 @@ while True:
         break
     time.sleep(1)
 
-parent_orders = []
-def exit_position(side, size):
-    print('exit {} position, size:{}'.format(side, size))
-    # import pdb; pdb.set_trace()
+def exit_position(price, side, size):
+    print('exit {} position, size:{}, price:{}'.format(side, size, price))
     opposite = None
     if side == 'BUY':
         opposite = 'SELL'
@@ -106,10 +51,10 @@ def exit_position(side, size):
         opposite = 'BUY'
 
     if size < 0.01:
-        bf.create_market_order(opposite, size + 0.01)
-        bf.create_market_order(side, 0.01)
+        order = bf.create_market_order(opposite, size + 0.01)
+        order = bf.create_market_order(side, 0.01)
     else:
-        bf.create_market_order(opposite, size)
+        order = bf.create_market_order(opposite, size)
 
 def exit_unnecessary_position():
     positions = bf.getpositions()
@@ -117,66 +62,46 @@ def exit_unnecessary_position():
     best_bid = bf.get_best_bid()
     for position in positions:
         open_date = arrow.get(position['open_date'])
-        if elapsed_time(open_date) < 1:
+        if elapsed_time(open_date) < 30:
             continue
         price = position['price']
         side = position['side']
         if side == 'BUY' and best_bid < price - target_spread * 2.5:
-            exit_position(side, position['size'])
+            exit_position(best_bid, side, position['size'])
         if side == 'SELL' and best_ask > price + target_spread * 2.5:
-            exit_position(side, position['size'])
+            exit_position(best_ask, side, position['size'])
 
-def cancel_missed_order():
+def adjust_missed_order_price():
     best_bid = bf.get_best_bid()
     best_ask = bf.get_best_ask()
-    for parent_order in get_active_parent_orders():
-        state = parent_order['parent_order_state']
-        if state != 'ACTIVE':
+    orders = bf.get_child_orders().values()
+    order_to_be_canceled = None
+    for order in orders:
+        if order['order_type'] == 'MARKET':
             continue
 
-        parent_order_date = parent_order['parent_order_date']
-        order_date = arrow.get(parent_order_date)
-        target_price = parent_order['price']
+        order_date = order['child_order_date']
+        target_price = order['price']
 
-        # cancel order if it is difficult to fufill
-        if parent_order['executed_size'] == 0:
-            if elapsed_time(order_date) > 10:
-                if best_bid > target_price + target_spread:
-                    print('cancel order')
-                    bf.cancel_parent_order(parent_order)
-                if best_ask < target_price - target_spread:
-                    print('cancel order')
-                    bf.cancel_parent_order(parent_order)
+        if elapsed_time(order_date) < 10:
+            continue
 
-        # if missed stop lost order, cancel parent special order
-        if parent_order['executed_size'] > 0:
-            if elapsed_time(order_date) > 20:
-                if best_ask < target_price - target_spread * 2:
-                    print('cancel order')
-                    bf.cancel_parent_order(parent_order)
-                if best_bid > target_price + target_spread * 2:
-                    print('cancel order')
-                    bf.cancel_parent_order(parent_order)
+        if best_bid > target_price + target_spread * 2:
+            order_to_be_canceled = order
+        if best_ask < target_price - target_spread * 2:
+            order_to_be_canceled = order
 
-print(datetime.datetime.now())
-requested_parent_orders = []
-def remove_inactive_requested_parent_orders():
-    inactive_request_orders = []
-    for requested_order in requested_parent_orders:
-        for parent_order in parent_orders:
-            # import pdb; pdb.set_trace()
-            if parent_order['parent_order_acceptance_id'] == requested_order['parent_order_acceptance_id'] and parent_order['parent_order_state'] != 'ACTIVE':
-                   inactive_request_orders.append(requested_order)
-
-    for inactive_request_order in inactive_request_orders:
-        requested_parent_orders.remove(inactive_request_order)
-
-def get_active_parent_orders():
-    active_parent_orders = []
-    for order in parent_orders:
-        if order['parent_order_state'] == 'ACTIVE':
-            active_parent_orders.append(order)
-    return active_parent_orders
+    if order_to_be_canceled:
+        print('cancel order:{}, size:{}'.format(order_to_be_canceled['side'], order_to_be_canceled['size']))
+        bf.cancel_child_order(order_to_be_canceled)
+        size = order_to_be_canceled['size']
+        price = order_to_be_canceled['price']
+        if order_to_be_canceled['side'] == 'BUY':
+            order = bf.send_limit_order('BUY', size, price + target_spread)
+            print('send order:', 'BUY', size, price + target_spread)
+        if order_to_be_canceled['side'] == 'SELL':
+            order = bf.send_limit_order('SELL', size, price - target_spread)
+            print('send order:', 'SELL', size, price - target_spread)
 
 ticks = []
 def sma(n = 5):
@@ -198,7 +123,6 @@ def get_mean():
     return (bf.get_best_ask() + bf.get_best_bid()) / 2
 
 def add_tick():
-    # import pdb; pdb.set_trace()
     mean = get_mean()
     ticks_len = len(ticks)
     if len(ticks) == 0:
@@ -209,35 +133,123 @@ def add_tick():
         set_last_tick_time(arrow.utcnow())
 
 def open():
-    if len(requested_parent_orders) < max_special_order:
+    max_number = max_order
+    if r.get('max_orders'):
+        max_number = r.get('max_number')
+    print()
+    print_orders()
+    print_position()
+    print()
+    if len(bf.orders) < max_number and total_position_size() < lot:
         target_price = bf.get_best_bid_with_depth(0.1)
         mean = get_mean()
-        print("mean:{}, sma:{}".format(mean, sma()))
-        order = None
-        if mean > sma():
-            print('long')
-            order = long(target_price)
-        else:
-            print('short')
-            order = short(target_price)
-        requested_parent_orders.append(order)
+        size = lot
+        if r.get('lot'):
+            size = lot
+        long(round(mean) - 25, size)
+        short(round(mean) + 26, size)
 
+pls = []
+raw_pls = []
+def print_pl(order, position):
+    size = 0
+    if position['size'] - order['size'] < 0:
+        size = position['size']
+    else:
+        size = order['size']
+    if position['side'] == 'BUY':
+        raw_pl = (order['price'] - position['price']) * size
+    else:
+        raw_pl = (position['price'] - order['price']) * size
+    pl = round(raw_pl)
+    pls.append(pl)
+    raw_pls.append(raw_pl)
+    print('pl:{}, raw_pl:{}, total_pl:{}, total_raw_pl:{}'.format(pl, raw_pl, sum(pls), sum(raw_pls)))
+
+positions = []
+def add_position(order):
+    order['matched_size'] = 0
+    sorted(positions, key=lambda position: position['open_date'])
+    order['original_size'] = order['size']
+    zero_size_positions = []
+    for position in positions:
+        if position['side'] != order['side'] and abs(order['size']) > 1e-5 and abs(position['size']) > 1e-5:
+            print_pl(order, position)
+            diff = position['size'] - order['size']
+            if diff < 0:
+                order['size'] -= position['size']
+                position['size'] -= 0
+            else:
+                position['size'] -= order['size']
+                order['size'] = 0
+            if position['size'] < 1e-5:
+                zero_size_positions.append(position)
+
+    for position in zero_size_positions:
+        positions.remove(position)
+
+    if order['size'] > 1e-5:
+        order['open_date'] = arrow.utcnow()
+        positions.append(order)
+
+def total_position_size():
+    total = 0
+    for position in positions:
+        total += position['size']
+    return total
+
+def remove_executed_order():
+    while not bf.execution_queue.empty():
+        execution = bf.execution_queue.get()
+        zero_size_order = None
+        for id, order in bf.orders.items():
+            matched = False
+            if order['side'].upper() == 'BUY' and order['id'] == execution['buy_child_order_acceptance_id']:
+                matched = True
+            if order['side'].upper() == 'SELL' and order['id'] == execution['sell_child_order_acceptance_id']:
+                matched = True
+            if matched:
+                order['executed_size']  += execution['size']
+                print('matched order:id:{}, executed_size:{}, execution size:{}'.format(order['id'], order['executed_size'], execution['size']))
+                if abs(order['size'] - order['executed_size']) <= 1e-6:
+                    zero_size_order = order
+        if zero_size_order:
+            del bf.orders[zero_size_order['id']]
+            if zero_size_order['order_type'] == 'MARKET':
+                zero_size_order['price'] = execution['price']
+            add_position(zero_size_order)
+
+def print_orders():
+    for key, order in bf.orders.items():
+        price = None
+        if order.get('price'):
+            price = order['price']
+        print('order side:{}, price:{}'.format(order['side'], price))
+
+def print_position():
+    for position in positions:
+        print('position side:{}, price:{}'.format(position['side'], position['price']))
+
+last_clean_up_at = None
 while True:
     try:
         add_tick()
 
-        parent_orders = bf.get_parent_orders()
-        remove_inactive_requested_parent_orders()
-
         open()
 
-        time.sleep(0.3)
+        if last_clean_up_at == None or elapsed_time(last_clean_up_at) > 1:
+            adjust_missed_order_price()
 
-        cancel_missed_order()
-        time.sleep(0.3)
-        exit_unnecessary_position()
+            # exit_unnecessary_position()
+
+            last_clean_up_at = arrow.utcnow()
+
+        remove_executed_order()
+
+        time.sleep(3)
 
     except Exception:
         print(traceback.format_exc())
+        import pdb; pdb.set_trace()
         time.sleep(3)
 
