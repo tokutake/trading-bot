@@ -5,6 +5,7 @@ import queue
 import ccxt
 import datetime
 import arrow
+import time
 
 class BitflyerWebsocket():
     is_fx = True
@@ -19,7 +20,6 @@ class BitflyerWebsocket():
     board_update_queue = queue.Queue()
     board_snapshot_queue = queue.Queue()
     execution_queue = queue.Queue()
-
     executions = []
 
     positions = []
@@ -40,6 +40,19 @@ class BitflyerWebsocket():
         self.wst = threading.Thread(target=lambda: self.ws.run_forever())
         self.wst.daemon = True
         self.wst.start()
+
+        self.ticks = []
+        tick_timer = threading.Timer(5, lambda: self.ticks.append(self.get_mean()))
+        tick_timer.start()
+
+        while True:
+            if len(self.bids) > 0 and len(self.asks) > 0:
+                break
+            time.sleep(1)
+
+    def get_mean(self):
+        return (self.get_best_ask() + self.get_best_bid()) / 2
+
 
     def print_board(self):
         for price, size in self.asks.items():
@@ -152,7 +165,7 @@ class BitflyerWebsocket():
         for execution in message_json:
             self.execution_queue.put(execution)
 
-    def getcollateral(self):
+    def get_collateral(self):
         return self.bf.request('getcollateral', 'private')['collateral']
 
     def get_child_orders(self):
@@ -182,3 +195,37 @@ class BitflyerWebsocket():
         # {'info': {'child_order_acceptance_id': 'JRF20190111-064826-160415'}, 'id': 'JRF20190111-064826-160415'}
         self.orders[order['id']] = order
         return order
+
+    def get_active_parent_orders(self, params = {}):
+        params['product_code'] = self.symbol
+        orders = self.bf.request('getparentorders', 'private', params = params)
+        active_orders = []
+        for order in orders:
+            state = order['parent_order_state']
+            if state == 'ACTIVE':
+                active_orders.append(order)
+        return active_orders
+
+    def get_parent_orders(self, params = {}):
+        params['product_code'] = self.symbol
+        return self.bf.request('getparentorders', 'private', params = params)
+
+    def get_parent_order(self, request_order):
+        orders = self.bf.request('getparentorders', 'private', params = {'product_code': self.symbol})
+        for order in orders:
+            if request_order['parent_order_acceptance_id'] == order['parent_order_acceptance_id']:
+                return order
+        return None
+
+    def get_volatility(self, n = 60):
+        if len(self.ticks) == 0:
+            return None
+        lowest = min(self.ticks[-n:])
+        highest = max(self.ticks[-n:])
+        return highest - lowest
+
+    def sma(self, n = 5):
+        if len(self.ticks) == 0:
+            return None
+        min_n = min(n, len(self.ticks))
+        return sum(self.ticks[-min_n:]) / min_n
