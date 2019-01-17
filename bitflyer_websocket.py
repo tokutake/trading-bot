@@ -7,6 +7,18 @@ import datetime
 import arrow
 import time
 
+class Scheduler:
+    def __init__(self, func, interval):
+        self.func = func
+        self.interval = interval
+        t = threading.Thread(target = self.start)
+        t.start()
+
+    def start(self):
+        while True:
+            self.func()
+            time.sleep(self.interval)
+
 class BitflyerWebsocket():
     is_fx = True
 
@@ -20,6 +32,7 @@ class BitflyerWebsocket():
     board_update_queue = queue.Queue()
     board_snapshot_queue = queue.Queue()
     execution_queue = queue.Queue()
+    message_queue = queue.Queue()
     executions = []
 
     positions = []
@@ -41,24 +54,27 @@ class BitflyerWebsocket():
         self.wst.daemon = True
         self.wst.start()
 
-        self.ticks = []
-        tick_timer = threading.Timer(5, lambda: self.ticks.append(self.get_mean()))
-        tick_timer.start()
-
         while True:
             if len(self.bids) > 0 and len(self.asks) > 0:
                 break
             time.sleep(1)
 
+        self.ticks = []
+        time.sleep(10)
+        self.tick_scheduler = Scheduler(self.append_tick , 1)
+
+        self.initial_collateral = self.get_collateral()
+
+    def append_tick(self):
+        mean = self.get_mean()
+        if mean:
+            self.ticks.append(mean)
+
+    def get_pl(self):
+        return self.get_collateral() - self.initial_collateral
+
     def get_mean(self):
         return (self.get_best_ask() + self.get_best_bid()) / 2
-
-
-    def print_board(self):
-        for price, size in self.asks.items():
-            print('price {}, size {}'.format(price, size))
-        for price, size in self.bids.items():
-            print('price {}, size {}'.format(price, size))
 
     def update_board(self, message_json):
         self.mid_price = message_json['mid_price']
@@ -68,6 +84,8 @@ class BitflyerWebsocket():
             self.asks[ask['price']] = ask['size']
 
     def on_message(self, message):
+        self.message_queue.put(message)
+
         param_json = json.loads(message)['params']
         channel = param_json['channel']
         message_json = param_json['message']
@@ -217,11 +235,13 @@ class BitflyerWebsocket():
                 return order
         return None
 
-    def get_volatility(self, n = 60):
+    def get_volatility(self, n = 20):
+        # import pdb; pdb.set_trace()
         if len(self.ticks) == 0:
             return None
         lowest = min(self.ticks[-n:])
         highest = max(self.ticks[-n:])
+        # print('ticks:{}, lowerst:{}, highest:{}'.format(self.ticks[-n:], lowest, highest))
         return highest - lowest
 
     def sma(self, n = 5):

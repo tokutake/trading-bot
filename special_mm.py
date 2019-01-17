@@ -6,6 +6,7 @@ import numpy as np
 import traceback
 import arrow
 import threading
+import scheduler
 
 symbol = 'FX_BTC_JPY'
 bf = bitflyer_websocket.BitflyerWebsocket()
@@ -13,6 +14,7 @@ bf = bitflyer_websocket.BitflyerWebsocket()
 lot = 0.01
 target_spread = 50
 max_special_order = 1
+max_simaltanious_order = 1
 print('lot:', lot)
 print('target_spread:', target_spread)
 print('max_special_order:', max_special_order)
@@ -29,6 +31,7 @@ def short(target_price):
     price = round(target_price)
     order = bf.send_parent_order({
       "order_method": "IFDOCO",
+      "minute_to_expire": 1,
       "time_in_force": "GTC",
       "parameters": [{
         "product_code": symbol,
@@ -87,15 +90,9 @@ def long(target_price):
     print(order)
     return order
 
-while True:
-    if bf.get_best_bid():
-        break
-    time.sleep(1)
-
 parent_orders = []
 def exit_position(side, size):
     print('exit {} position, size:{}'.format(side, size))
-    # import pdb; pdb.set_trace()
     opposite = None
     if side == 'BUY':
         opposite = 'SELL'
@@ -108,20 +105,26 @@ def exit_position(side, size):
     else:
         bf.create_market_order(opposite, size)
 
+def opposite(side):
+    if side == 'BUY':
+        return 'SELL'
+    else:
+        return 'BUY'
+
 def exit_unnecessary_position():
     positions = bf.getpositions()
-    best_ask = bf.get_best_ask()
-    best_bid = bf.get_best_bid()
-    for position in positions:
-        open_date = arrow.get(position['open_date'])
-        if elapsed_time(open_date) < 60 * 10:
-            continue
-        price = position['price']
+    total_size = 0
+    side = None
+    for position in bf.getpositions():
         side = position['side']
-        if side == 'BUY' and best_bid < price - target_spread * 2.5:
-            exit_position(side, position['size'])
-        if side == 'SELL' and best_ask > price + target_spread * 2.5:
-            exit_position(side, position['size'])
+        total_size += position['size']
+    total_executed_size = 0
+    orders = bf.get_active_parent_orders()
+    for order in orders:
+        total_executed_size += order['executed_size']
+
+    if total_size > total_executed_size:
+        exit_position(side, total_size - total_executed_size)
 
 def close_all_positions():
     positions = bf.getpositions()
@@ -140,32 +143,18 @@ def cancel_parent_order(order):
     bf.cancel_parent_order(order)
 
 def cancel_missed_order():
-    best_bid = bf.get_best_bid()
-    best_ask = bf.get_best_ask()
+    canceled = False
     for parent_order in get_active_parent_orders():
-        state = parent_order['parent_order_state']
-        if state != 'ACTIVE':
-            continue
-
         parent_order_date = parent_order['parent_order_date']
         order_date = arrow.get(parent_order_date)
-        target_price = parent_order['price']
 
         # cancel order if it is difficult to fufill
         if parent_order['executed_size'] == 0:
-            if elapsed_time(order_date) > 60:
-                if best_bid > target_price + target_spread:
-                    cancel_parent_order(parent_order)
-                if best_ask < target_price - target_spread:
-                    cancel_parent_order(parent_order)
-
-        # if missed stop lost order, cancel parent special order
-        if parent_order['executed_size'] > 0:
-            if elapsed_time(order_date) > 20:
-                if best_ask < target_price - target_spread * 2:
-                    cancel_parent_order(parent_order)
-                if best_bid > target_price + target_spread * 2:
-                    cancel_parent_order(parent_order)
+            if elapsed_time(order_date) > 2:
+                cancel_parent_order(parent_order)
+                canceled = True
+    if canceled:
+        time.sleep(1)
 
 print(datetime.datetime.now())
 requested_parent_orders = []
@@ -188,33 +177,39 @@ def get_active_parent_orders():
     return active_parent_orders
 
 def open():
+    volatility = bf.get_volatility()
+    if volatility > target_spread * 2:
+        return
     if len(requested_parent_orders) < max_special_order:
-        mean = bf.get_mean()
-        import pdb; pdb.set_trace()
+        mid_price = bf.get_mean()
         order = None
         sma = bf.sma()
-        print('sma:', sma)
-        print('mean:', mean)
+        print('volatility:', volatility)
         for i in range(1):
-            if mean > sma:
-                order = long(mean)
+            if mid_price > sma:
+                order = long(mid_price)
                 print('long')
             else:
-                order = short(mean)
+                order = short(mid_price)
                 print('short')
         requested_parent_orders.append(order)
 
 def print_stat():
     print(arrow.utcnow())
     for position in bf.getpositions():
-        print("position side:{}, price:{}, size:{}, open_date:{}".format(position['side'], position['price'], position['size'], position['open_date']))
+        # print("position side:{}, price:{}, size:{}, open_date:{}".format(position['side'], position['price'], position['size'], position['open_date']))
+        print(position)
     for order in bf.get_active_parent_orders():
-        print("order price:{}, executed_size:{}".format(order['price'], order['executed_size']))
+        # print("order price:{}, executed_size:{}".format(order['price'], order['executed_size']))
+        print(order)
     print('volatility:', bf.get_volatility())
-    print('collateral:', bf.get_collateral())
+    print('pl:', bf.get_pl())
+    threading.Timer(30, print_stat).start()
 
-stat_timer = threading.Timer(60 * 5, print_stat)
-stat_timer.start()
+print_stat()
+time.sleep(5)
+
+gc_scheduler = scheduler.Scheduler(exit_unnecessary_position, 5)
 
 while True:
     try:
@@ -225,8 +220,7 @@ while True:
 
         time.sleep(0.3)
 
-        # cancel_missed_order()
-        # exit_unnecessary_position()
+        cancel_missed_order()
 
     except Exception:
         print(traceback.format_exc())
