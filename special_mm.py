@@ -31,7 +31,7 @@ def short(target_price):
     price = round(target_price)
     order = bf.send_parent_order({
       "order_method": "IFDOCO",
-      "minute_to_expire": 1,
+      "minute_to_expire": 5,
       "time_in_force": "GTC",
       "parameters": [{
         "product_code": symbol,
@@ -63,6 +63,7 @@ def long(target_price):
     price = round(target_price)
     order = bf.send_parent_order({
       "order_method": "IFDOCO",
+      "minute_to_expire": 5,
       "time_in_force": "GTC",
       "parameters": [{
         "product_code": symbol,
